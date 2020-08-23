@@ -89,33 +89,36 @@ namespace BookmarkItSyncLibrary.Data
 
         private async Task InitiateArticlesFetchAsync(UserDetails userDetails, ICallbackWithProgress<SyncBookmarksResponse> callback = default)
         {
-            do
+            var bookmarks = DBHandler.GetArticlesToBeFetched(userDetails.Id);
+            userDetails.IsArticleFetchComplete = bookmarks.IsNullOrEmpty();
+            DBHandler.AddOrReplaceUserDetails(userDetails);
+            List<Article> articles = new List<Article>();
+            foreach (var bookmark in bookmarks)
             {
-                var bookmarks = DBHandler.GetArticlesToBeFetched(userDetails.Id);
-                userDetails.IsArticleFetchComplete = bookmarks.IsNullOrEmpty();
-                DBHandler.AddOrReplaceUserDetails(userDetails);
-                List<Article> articles = new List<Article>();
-                foreach (var bookmark in bookmarks)
+                try
                 {
-                    try
-                    {
-                        var article = await FetchArticleAsync(bookmark.Id, bookmark.ResolvedUrl).ConfigureAwait(false);
-                        articles.Add(article);
-                    }
-                    catch
-                    {
-                        DBHandler.UpdateArticleError(bookmark.Id);
-                    }
+                    var paginatedArticle = await FetchPaginatedArticleAsync(bookmark.Id, bookmark.ResolvedUrl).ConfigureAwait(false);
+                    articles.AddRange(paginatedArticle);
                 }
-                DBHandler.AddOrReplaceArticles(articles);
+                catch
+                {
+                    DBHandler.UpdateArticleError(bookmark.Id);
+                }
             }
-            while (!userDetails.IsArticleFetchComplete);
+            DBHandler.AddOrReplaceArticles(articles);
         }
 
-        private async Task<Article> FetchArticleAsync(string id, string url)
+        private async Task<IList<Article>> FetchPaginatedArticleAsync(string id, string url)
         {
-            var content = await NetHandler.GetArticleAsync(url).ConfigureAwait(false);
-            return new Article() { Id = id, Content = content };
+            var paginatedArticle = await NetHandler.GetPaginatedArticleAsync(url).ConfigureAwait(false);
+
+            if (paginatedArticle.IsNullOrEmpty()) { return default; }
+            var articles = new List<Article>();
+            for (var i = 0; i < paginatedArticle.Count(); i++)
+            {
+                articles.Add(new Article(id, i + 1) { Content = paginatedArticle[i] });
+            }
+            return articles;
         }
 
         private bool IsValidResponse(SyncBookmarksResponse syncBookmarksResponse)
